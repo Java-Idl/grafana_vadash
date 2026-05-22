@@ -71,6 +71,81 @@ def clean_column_name(col):
     col_clean = col_clean.replace(' ', '_').strip('_')
     return col_clean
 
+def initialize_database_schema(conn):
+    """
+    Auto-initializes the PostgreSQL table schema and indexes if they do not exist.
+    This makes the application self-contained without needing db_init.sql on the host.
+    """
+    schema_sql = """
+    CREATE TABLE IF NOT EXISTS vulnerabilities (
+        id SERIAL PRIMARY KEY,
+        plugin_id INTEGER,
+        cve VARCHAR(100),
+        cvss_base_score NUMERIC(3,1),
+        risk VARCHAR(20),
+        host VARCHAR(255),
+        protocol VARCHAR(20),
+        port VARCHAR(20),
+        name TEXT,
+        synopsis TEXT,
+        description TEXT,
+        solution TEXT,
+        see_also TEXT,
+        plugin_output TEXT,
+        source_file VARCHAR(255) NOT NULL,
+        ingested_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_vulnerabilities_risk ON vulnerabilities(risk);
+    CREATE INDEX IF NOT EXISTS idx_vulnerabilities_host ON vulnerabilities(host);
+    CREATE INDEX IF NOT EXISTS idx_vulnerabilities_source_file ON vulnerabilities(source_file);
+    CREATE INDEX IF NOT EXISTS idx_vulnerabilities_ingested_at ON vulnerabilities(ingested_at);
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute(schema_sql)
+        conn.commit()
+        logging.info("Database schema and indexes checked/initialized successfully.")
+    except Exception as e:
+        conn.rollback()
+        logging.error(f"Failed to auto-initialize database schema: {e}")
+
+def initialize_grafana_provisioning():
+    """
+    Auto-provisions the Grafana data source dynamically if the shared volume is mapped.
+    """
+    prov_path = "/app/grafana_provisioning"
+    if not os.path.exists(prov_path):
+        logging.info("Grafana provisioning path not mapped. Skipping auto-provisioning.")
+        return
+    
+    ds_dir = os.path.join(prov_path, "datasources")
+    os.makedirs(ds_dir, exist_ok=True)
+    
+    ds_file = os.path.join(ds_dir, "datasource.yml")
+    
+    yaml_content = f"""apiVersion: 1
+datasources:
+  - name: PostgreSQL
+    type: postgres
+    access: proxy
+    url: db:5432
+    user: {DB_USER}
+    secureJsonData:
+      password: {DB_PASSWORD}
+    jsonData:
+      database: {DB_NAME}
+      sslmode: disable
+      postgresVersion: 1500
+    isDefault: true
+    editable: true
+"""
+    try:
+        with open(ds_file, "w") as f:
+            f.write(yaml_content)
+        logging.info(f"Grafana data source provisioned dynamically at {ds_file}")
+    except Exception as e:
+        logging.error(f"Failed to write Grafana datasource provisioning file: {e}")
+
 def wait_for_database():
     """
     Blocks startup by polling the PostgreSQL port until a successful
@@ -88,7 +163,13 @@ def wait_for_database():
                 dbname=DB_NAME,
                 connect_timeout=3
             )
+            # Run self-contained database schema initialization
+            initialize_database_schema(conn)
             conn.close()
+            
+            # Run dynamic Grafana data source auto-provisioning
+            initialize_grafana_provisioning()
+            
             logging.info("Successfully connected to the database. Ingestion monitoring is ready!")
             break
         except psycopg2.OperationalError as e:
