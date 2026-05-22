@@ -1,23 +1,21 @@
-# Nessus Ingest and Grafana Dashboard Pipeline
+# Nessus Parser and Grafana Dashboard
 
-If you have ever done security audits, vulnerability scans, or coursework involving network security, you probably know how painful it is to work with raw scan reports. Nessus generates massive CSV files that are tough to read, columns often change names between versions, and tracking your network's overall security posture over time feels almost impossible without a dedicated tool. 
-
-This project solves that by setting up a fully automated, multi-container pipeline that parses your Nessus CSV exports, structures them inside a database, and visualizes them on a live Grafana dashboard. It is designed to be lightweight, self-healing, and extremely simple to run.
+This is a simple project to help you parse Nessus vulnerability scans (CSV format), store them in a database, and view them on a Grafana dashboard. If you have ever had to manually sort through Nessus scan exports, you know it can get tedious. This setup imports the data automatically and configures a basic Grafana connection so you can start analyzing your scans right away.
 
 ---
 
-## Quick Run: Zero-Download Setup (Docker Compose Only)
+## Running with Docker Compose (No Download Needed)
 
-You do not need to download this repository or install any programming tools to run this application. If you just want to spin up the pipeline on your computer using Docker, follow these steps:
+You do not need to download this repository to run this application. You can set up the entire stack on any machine running Docker by copying the following files into a folder:
 
 ### 1. Create a Project Folder
-Create a new directory on your machine where you want the project to live, for example, `nessus-pipeline`.
+Create a folder on your computer, for example, `nessus-parser`.
 
 ### 2. Create the Configuration Files
 Inside that folder, create the following two files:
 
 #### Create `docker-compose.yml`
-Copy and paste this exact content into a file named `docker-compose.yml`:
+Copy and paste this content into a file named `docker-compose.yml`:
 
 ```yaml
 services:
@@ -109,78 +107,73 @@ GRAFANA_PORT=3000
 SCAN_FILES_PATH=./scan_files
 ```
 
-### 3. Spin Up the Containers
-Open your terminal in your `nessus-pipeline` folder and start the services:
+### 3. Start the Application
+Open a terminal in your folder and run:
 
 ```bash
 docker compose up -d
 ```
 
-### 4. Drop in a Nessus CSV File
-1. Once the containers start, Docker will automatically create a `./scan_files` folder in your project directory.
-2. Drag and drop any Nessus CSV report directly into the `./scan_files` folder.
-3. The ingestion daemon will:
-   - Detect the file within 5 seconds.
-   - Wait 3 seconds to ensure the file is completely written and stable.
-   - Parse and clean the columns, write the data into the database, and write an audit record to `./scan_files/ingestion_audit.log`.
-   - Safely move the file into `./scan_files/archive/` (adding a timestamp to prevent naming conflicts).
+### 4. Import a Nessus CSV
+1. Once the services start, you will see a new `./scan_files` folder in your project directory.
+2. Drag and drop any Nessus CSV scan export into the `./scan_files` folder.
+3. The parser script will automatically detect the file within a few seconds, wait briefly to ensure it is not still copying, clean the column headers, and import the records into the database.
+4. The imported CSV will then be moved to `./scan_files/archive/` with a timestamp added to its filename so you do not accidentally overwrite old scans.
 
 ---
 
 ## Alternative Setup: Cloning the Repository
 
-If you want to view the source code, play around with the scripts, or build the images yourself:
+If you want to view the source code or build the images yourself, you can clone the repository:
 
-### Option A: Standard Repository Launch
-Clone the repo and run compose directly:
-
+### Option A: Clone and Run
 ```bash
 # Clone the repository
 git clone https://github.com/Java-Idl/grafana_vadash.git
 
-# Navigate into the project folder
+# Go into the project directory
 cd grafana_vadash
 
-# Start the stack
+# Start the services
 docker compose up -d
 ```
 
-### Option B: Local Development & Rebuilding
-If you want to modify the parser script (`ingest.py`) or customize the Dockerfile, you can build your changes into a local image:
+### Option B: Build Locally
+If you want to modify the Python parser script (`ingest.py`) or the Dockerfile, you can build the image on your machine:
 
 ```bash
 # Build the parser image locally
 docker build -t galahanorg/nessus-ingester:latest ./ingestion
 
-# Spin up the containers using your newly compiled image
+# Start the services with your local build
 docker compose up -d
 ```
 
 ---
 
-## Under the Hood: How the Pipeline Works
+## How It Works
 
-The stack consists of three services running inside an isolated virtual network:
+The application runs three separate containers:
 
-1. **PostgreSQL (vadash_postgres)**: The storage layer. It maintains the database state and holds all the parsed vulnerability entries.
-2. **Python Ingest Daemon (vadash_ingestion)**: The brain of the operation. This container runs a persistent background script that watches the scan folder. It is designed to be fully self-healing: on startup, it automatically constructs the SQL table schema and indexing, and dynamic provisioning directories without requiring any manual SQL execution.
-3. **Grafana (vadash_grafana)**: The visualization layer. It comes pre-provisioned via a shared Docker volume, meaning it establishes its connection to PostgreSQL automatically at boot using the credentials in your `.env` file. You do not have to configure anything inside the browser.
+1. **PostgreSQL**: Stores the vulnerability records in a table named `vulnerabilities`.
+2. **Python Parser Script**: Monitors the folder, cleans the columns, inserts the CSV data into PostgreSQL, and moves the finished file to the archive. On startup, it automatically creates the database table, indexes, and the Grafana data source configuration.
+3. **Grafana**: Pre-configured to connect to the database. It shares a volume with the Python parser to read the database connection settings on startup.
 
 ---
 
 ## Setting Up Your Grafana Dashboard
 
-Grafana is already connected to your PostgreSQL database. Here is how to build a dynamic security dashboard:
+Grafana connects to your database automatically on startup. Here is how to configure a simple dashboard:
 
 1. Open your browser and go to `http://localhost:3000`.
-2. Log in with **Username: admin / Password: admin** (you will be prompted to set a new password on your first login).
+2. Log in using **Username: admin / Password: admin** (you will be asked to set a new password on your first login).
 3. Create a new dashboard.
 
-### Step 1: Add a Dynamic Scan File Variable
-To avoid mixing up different scans, we will create a dropdown menu so you can look at specific files individually or all at once:
+### Step 1: Create a Scan File Filter
+Creating a dashboard variable allows you to filter your panels by specific scan files:
 1. Click the Gear icon (Dashboard settings) in the top-right corner.
-2. Go to **Variables** on the left menu and click **Add variable**.
-3. Set these fields:
+2. Select **Variables** on the left and click **Add variable**.
+3. Fill out the following:
    - **Name**: source_file
    - **Type**: Query
    - **Label**: Scan File
@@ -189,17 +182,17 @@ To avoid mixing up different scans, we will create a dropdown menu so you can lo
      ```sql
      SELECT DISTINCT source_file FROM vulnerabilities ORDER BY source_file DESC;
      ```
-   - **Selection Options**: Enable **Multi-value** and **Include All option**.
-4. Click **Apply**. A dropdown menu will appear at the top of your dashboard.
+   - **Selection Options**: Enable both **Multi-value** and **Include All option**.
+4. Click **Apply**. You will now see a dropdown menu at the top of your dashboard.
 
 ---
 
-### Step 2: Build the Panels with SQL Queries
+### Step 2: Add Panels with SQL Queries
 
-Click **Add Panel** > **Add a new panel** and paste these queries to create your visualizations:
+Click **Add Panel** > **Add a new panel** and use these SQL queries:
 
-#### Panel A: Risk Distribution (Stat Panels)
-Displays a quick count of Critical, High, Medium, and Low issues in the selected scans.
+#### Panel A: Severity Levels (Stat Panel)
+Shows a simple count of Critical, High, Medium, and Low vulnerabilities.
 - **Visualization**: Stat
 - **SQL Query**:
   ```sql
@@ -217,10 +210,10 @@ Displays a quick count of Critical, High, Medium, and Low issues in the selected
     ELSE 5
   END;
   ```
-- *Configuration Tip*: Set the panel settings to show "Value + Name" and apply color overrides (Red for Critical, Orange for High, Yellow for Medium).
+- *Tip*: Set the panel configuration to show "Value + Name" and assign color overrides (like red for Critical and orange for High).
 
-#### Panel B: Host Exposure Density (Bar Chart)
-Lists the top 15 most vulnerable machines or IPs on your network.
+#### Panel B: Most Vulnerable Hosts (Bar Chart)
+Shows the top 15 hosts with the most Critical, High, or Medium severity issues.
 - **Visualization**: Bar Chart
 - **SQL Query**:
   ```sql
@@ -235,8 +228,8 @@ Lists the top 15 most vulnerable machines or IPs on your network.
   LIMIT 15;
   ```
 
-#### Panel C: Security Posture Trends (Time Series Graph)
-Tracks historical trend lines of vulnerability counts over scanning days.
+#### Panel C: Vulnerability Trends (Time Series Graph)
+Tracks the count of vulnerabilities over time based on when the scans were imported.
 - **Visualization**: Time Series
 - **SQL Query**:
   ```sql
@@ -250,8 +243,8 @@ Tracks historical trend lines of vulnerability counts over scanning days.
   ORDER BY time;
   ```
 
-#### Panel D: Granular Data Inspector (Table)
-A detailed, searchable data table showing specific plugins, descriptions, and solutions.
+#### Panel D: Detailed Records List (Table)
+A table showing specific vulnerability details, including the plugin ID, host, description, and solution.
 - **Visualization**: Table
 - **SQL Query**:
   ```sql
@@ -273,11 +266,11 @@ A detailed, searchable data table showing specific plugins, descriptions, and so
 
 ---
 
-## Cool Engineering Details (Perfect for Class Projects!)
+## Practical Implementation Details
 
-If you are using this code as part of a university project, lab, or report, here are the main engineering details you should highlight:
+Here are some of the design decisions implemented in the code:
 
-*   **Resilient Startup Waiting Loop**: Standard Docker Compose checks if containers are started, not if they are actually ready to accept connections. We engineered a socket-polling retry loop in `ingest.py` that waits until the PostgreSQL database is fully online before allowing the ingestion daemon to start monitoring. This avoids container crashes on boot.
-*   **Dynamic Column Normalization**: Nessus report formats can vary, sometimes naming columns "Plugin ID", "Plugin_ID", or "pluginid". The Python parser uses regular expressions to strip spaces, force lowercase, and standardize headers dynamically, mapping them to the correct database schema out-of-the-box.
-*   **Zero-Config Schema and Dashboard Provisioning**: To achieve the zero-download target, schema creation (`CREATE TABLE IF NOT EXISTS`) and Grafana connection setups are handled dynamically by the Python service on boot. This completely removes the need to maintain host SQL scripts or manual credential steps.
-*   **Auditing and Integrity Log**: Every processed file writes a line to `./scan_files/ingestion_audit.log`, verifying the expected CSV row counts against the successful inserts in the database. This ensures complete data integrity.
+*   **Database Startup Wait**: Because containers can start at slightly different times, the Python script uses a connection loop. It will poll the database port and wait until PostgreSQL is ready before starting the monitoring loop. This prevents the script from crashing on startup.
+*   **Column Name Standardization**: Nessus reports do not always use the exact same column names (for example, "Plugin ID" vs "plugin_id"). The script converts headers to lowercase, replaces spaces with underscores, and maps them to standard database fields dynamically.
+*   **Automatic Setup**: The PostgreSQL table schema, indexes, and Grafana datasource file are created programmatically by the Python container. This makes it possible to run the entire setup using only a single Docker Compose file.
+*   **Audit Logging**: The script writes a record to `./scan_files/ingestion_audit.log` showing the filename, the number of rows in the CSV, and the number of rows successfully saved to the database. This helps you verify that all data was imported correctly.
