@@ -1,0 +1,70 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: vadash_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+      - ./db_init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - vulnerability_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  ingestion:
+    build:
+      context: ./ingestion
+      dockerfile: Dockerfile
+    container_name: vadash_ingestion
+    restart: always
+    environment:
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_NAME=${POSTGRES_DB}
+      - SCAN_FILES_PATH=/app/scan_files
+    volumes:
+      - ${SCAN_FILES_PATH}:/app/scan_files
+    networks:
+      - vulnerability_net
+    depends_on:
+      db:
+        condition: service_healthy
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: vadash_grafana
+    restart: always
+    ports:
+      - "${GRAFANA_PORT}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_NAME=${POSTGRES_DB}
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - grafana_storage:/var/lib/grafana
+    networks:
+      - vulnerability_net
+    depends_on:
+      db:
+        condition: service_healthy
+
+networks:
+  vulnerability_net:
+    driver: bridge
+
+volumes:
+  grafana_storage:
+    driver: local

@@ -1,0 +1,39 @@
+# Local Environment Configurations (contains DB credentials)
+.env
+
+# Database Storage Directory (PostgreSQL data files)
+postgres_data/
+
+# Nessus CSV Vulnerability Scans
+# Ignore all CSV scans placed in the intake folder
+scan_files/*.csv
+# Ignore archived CSV scans
+scan_files/archive/
+# Ignore ingestion audit logs
+scan_files/ingestion_audit.log
+
+# Grafana Local Persistent Storage (if bind-mounted locally)
+grafana_storage/
+grafana_data/
+
+# Python Cache and Compilations
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor and OS Specific Metadata
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+*~
+Thumbs.db
+ehthumbs.db
+Desktop.ini
