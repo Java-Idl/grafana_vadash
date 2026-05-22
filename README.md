@@ -1,87 +1,76 @@
-# Nessus Vulnerability Ingest Engine & Grafana Dashboard
+# Nessus Ingest & Grafana Dashboard
 
-This project is a containerized infrastructure that watches a host directory for Nessus security scanning reports (in CSV format), parses and cleans the data dynamically, persists it into a secured PostgreSQL database, and exposes it through Grafana.
+Hey there! This is a clean, multi-container pipeline built to automate the parsing, storage, and visualization of Nessus vulnerability reports (CSV exports). 
 
----
-
-## Service Architecture
-
-- **PostgreSQL Database (`vadash_postgres`)**: An isolated, persistent PostgreSQL service initialized with standard security metrics schemas, customized configurations, and indexes.
-- **Python Ingest Engine (`vadash_ingestion`)**: A lightweight container that watches the local `./scan_files` folder, detects new files, verifies that write locks are released, cleans headers, audits rows, and moves files to the archive.
-- **Grafana Dashboard (`vadash_grafana`)**: Auto-provisioned to connect directly to the database over the secure container network on port `3000`.
+If you've ever tried manually formatting and copying vulnerability scan data, you know it is a headache. Column names change slightly, files overwrite each other, and tracking security trends over time is painful. This project automates the entire flow using Docker Compose, Python, PostgreSQL, and Grafana.
 
 ---
 
-## Quick Start Instructions
+## How It Works (The Architecture)
 
-### Prerequisites
-- Install **Docker** and **Docker Compose** on your host machine.
+Here is a quick overview of how the three containers work together:
 
-### Step 1: Initialize the Containers
-From the root of this project workspace directory, run:
+1. **PostgreSQL Database (vadash_postgres)**: The storage layer. It initializes itself automatically using a custom schema (db_init.sql) with predefined tables and indexes optimized for security dashboards.
+2. **Python Ingest Daemon (vadash_ingestion)**: The "brain" of the operation. This container actively watches a folder on your computer. When you drop a Nessus CSV in, it handles contention checks (waiting for files to finish copying), cleans up headers dynamically, parses the records, commits them to the database, audits the row count, and archives the file.
+3. **Grafana Visualization (vadash_grafana)**: The presentation layer. It comes pre-provisioned, meaning it connects to the database automatically on startup so you don't have to manually configure usernames and passwords in the browser.
+
+---
+
+## Getting Started
+
+### 1. Prerequisites
+Make sure you have Docker Desktop installed and running on your computer.
+
+### 2. Booting Up the Stack
+Open a terminal in the root folder of this project and run:
 ```bash
 docker compose up -d --build
 ```
-This command builds the custom ingestion image, initializes the PostgreSQL schema via `db_init.sql`, configures the network layer, and spawns the containers in detached mode.
+This tells Docker to build our custom Python ingestion container, establish a private isolated bridge network, start PostgreSQL, and expose Grafana at http://localhost:3000.
 
-### Step 2: Feed Vulnerability CSV Scans
-1. Place your Nessus `.csv` scan files into the newly created `./scan_files` directory inside your workspace root.
-2. The custom watcher will:
-   - Recognize the new file within 5 seconds.
-   - Wait 3 seconds to confirm file stability (to avoid parsing partial exports).
-   - Dynamically clean headers, parse the rows, and insert them into the database.
-   - Append data alignment audit stats directly to `./scan_files/ingestion_audit.log`.
-   - Move the processed file to `./scan_files/archive/` (renamed with a timestamp to avoid naming conflicts).
-
-### Step 3: View Ingestion Logs and Auditing
-- To watch the ingestion service process files in real-time, run:
-  ```bash
-  docker compose logs -f ingestion
-  ```
-- Inspect `./scan_files/ingestion_audit.log` to confirm data alignment audits:
-  ```text
-  [2026-05-22 14:15:30] FILE: external_scan_results.csv | STATUS: SUCCESS | EXPECTED ROWS: 154 | INGESTED ROWS: 154
-  ```
+### 3. Feeding a CSV Scan
+1. Drag and drop any Nessus CSV report into the newly created ./scan_files folder in the project root.
+2. Under the hood, the Python daemon will:
+   - Detect the file within 5 seconds.
+   - Wait 3 seconds and double-check that the file size has stopped growing (this makes sure it doesn't parse a half-written file!).
+   - Normalize column names dynamically, insert the data, and append status to ./scan_files/ingestion_audit.log.
+   - Rename and move the file into ./scan_files/archive/ (adding a timestamp to prevent naming collisions).
 
 ---
 
-## Grafana Manual Dashboard Setup Guide
+## Building Your Grafana Dashboard (The Fun Part!)
 
-Grafana is automatically configured with a pre-connected PostgreSQL datasource. 
+Grafana is already connected to your PostgreSQL database out of the box. 
 
-### Accessing Grafana
-1. Open your browser and navigate to `http://localhost:3000`.
-2. Log in with the default administrator credentials:
-   - **Username**: `admin`
-   - **Password**: `admin` (you will be prompted to change this upon first login).
+1. Go to http://localhost:3000 in your web browser.
+2. Log in with Username: admin / Password: admin (it will ask you to change this).
+3. Create a new dashboard.
 
----
-
-### Step 1: Create a Dashboard Level Variable
-To filter dashboard panels dynamically by the security scan filename:
-1. In your dashboard, click **Dashboard Settings** (the gear icon in the top right).
-2. Go to **Variables** > **Add variable**.
-3. Set the following parameters:
-   - **Name**: `source_file`
-   - **Type**: `Query`
-   - **Label**: `Scan File`
-   - **Data source**: `PostgreSQL`
-   - **Query**:
-     ```sql
-     SELECT DISTINCT source_file FROM vulnerabilities ORDER BY source_file DESC;
-     ```
-   - **Selection Options**: Enable **Multi-value** and **Include All option**.
-4. Click **Apply**.
+### Step 1: Set up a Dynamic File Filter (Variable)
+Before making panels, let's create a dropdown filter so you can isolate specific scans:
+- In your dashboard, click the Gear Icon (Dashboard settings) in the top-right corner.
+- Go to Variables > Add variable.
+- Configure these settings:
+  - **Name**: source_file
+  - **Type**: Query
+  - **Label**: Scan File
+  - **Data source**: PostgreSQL
+  - **Query**: 
+    ```sql
+    SELECT DISTINCT source_file FROM vulnerabilities ORDER BY source_file DESC;
+    ```
+  - **Selection Options**: Turn on Multi-value and Include All option.
+- Click Apply. You will now have a neat dropdown menu at the top of your dashboard.
 
 ---
 
-### Step 2: Add Panel Visualizations & Query Design
+### Step 2: Copy-Paste SQL Queries for Your Panels
 
-Create panels on your dashboard and copy-paste the SQL queries below:
+Now, click Add Panel > Add a new panel and use these queries to build your visualizations:
 
-#### Panel A: Vulnerability Distribution Metrics (Stat Panels)
-Visualizes overall critical, high, medium, and low risk summaries as giant counter cards.
-- **Visualization**: `Stat`
+#### Panel A: Risk Distribution (Stat Panels)
+Shows you a quick count of Critical, High, Medium, and Low issues in the selected scans.
+- **Visualization**: Stat
 - **SQL Query**:
   ```sql
   SELECT 
@@ -98,11 +87,11 @@ Visualizes overall critical, high, medium, and low risk summaries as giant count
     ELSE 5
   END;
   ```
-- **Configuration Tip**: Set the Stat Panel options to display `Value + Name` and apply color mappings (e.g., Critical: Red, High: Orange, Medium: Yellow, Low: Blue).
+- *Tip*: Set the panel settings to show "Value + Name" and apply color overrides (e.g. Red for Critical, Orange for High, Yellow for Medium).
 
-#### Panel B: Asset Exposure Mapping (Bar or Pie Chart)
-Identifies the network addresses containing the highest volume of risk exposures.
-- **Visualization**: `Bar Chart` or `Pie Chart`
+#### Panel B: Host Exposure Density (Bar Chart)
+Finds the top 15 most vulnerable computers/IPs on your network.
+- **Visualization**: Bar Chart or Pie Chart
 - **SQL Query**:
   ```sql
   SELECT 
@@ -116,9 +105,9 @@ Identifies the network addresses containing the highest volume of risk exposures
   LIMIT 15;
   ```
 
-#### Panel C: Vulnerability Posture Tracking (Time Series / Line Graph)
-Tracks historical trend lines of vulnerability ingestion quantities over scanning periods.
-- **Visualization**: `Time Series`
+#### Panel C: Security Posture Trends (Time Series Line Graph)
+Tracks historical trend lines of vulnerability counts over scanning days.
+- **Visualization**: Time Series
 - **SQL Query**:
   ```sql
   SELECT 
@@ -130,11 +119,10 @@ Tracks historical trend lines of vulnerability ingestion quantities over scannin
   GROUP BY time, risk
   ORDER BY time;
   ```
-- **Configuration Tip**: Set graph type to line/bars. Grouping by `risk` will automatically draw distinct timeline lines for Critical, High, Medium, and Low trends over time.
 
-#### Panel D: Granular Data Inspection (Table / Grid)
-Provides a deep-dive searchable grid displaying vulnerability names, definitions, references, and solutions.
-- **Visualization**: `Table`
+#### Panel D: Granular Data Inspector (Table)
+A searchable table at the bottom of your dashboard showing specific plugin IDs, descriptions, and solutions.
+- **Visualization**: Table
 - **SQL Query**:
   ```sql
   SELECT 
@@ -152,15 +140,14 @@ Provides a deep-dive searchable grid displaying vulnerability names, definitions
   WHERE source_file IN (${source_file:sqlstring})
   ORDER BY cvss_base_score DESC NULLS LAST;
   ```
-- **Configuration Tip**: Enable search filtering inside Grafana column settings for rapid key-text lookup.
 
 ---
 
-## Operations & Failure Recovery
+## Behind the Scenes (Cool Engineering Details)
 
-| Category | Issue | Action / Resolution |
-| --- | --- | --- |
-| **Startup Sequence** | Ingest engine starts too early. | Custom built-in TCP check in `ingest.py` waits dynamically until PostgreSQL accepts ports. |
-| **Permissions** | Docker mount cannot write logs/files. | Standard Windows-to-Linux path conversions are handled cleanly by Docker Compose. Ensure Docker Desktop has read/write permissions on the workspace directory. |
-| **Network** | Network connection drops. | Automatic reconnect retry loop in Ingest Engine prevents crashes and logs exact exception states. |
-| **Parsing Fails** | Bad CSV format. | Errant files are prefixed with `FAILED_` and moved immediately to `./scan_files/archive/` to prevent blockages, and logged in the audit trail. |
+If you're looking at the code for class or curious how it works:
+- **Resilient Startup Loop**: Standard Docker depends_on only checks if a container is started, not if the database is actually ready to accept connections. We wrote a custom socket retry loop in Python (ingest.py) that checks connection states and prevents the ingestion script from crashing on start.
+- **Dynamic Name Cleaning Engine**: Nessus exports sometimes name columns Plugin ID or Plugin_ID or pluginid. The parser uses regex to clean column names, forcing everything to lowercase, stripping special characters, and converting spaces to underscores. It then maps them dynamically to standard database headers.
+- **Integrity Auditing**: Every file ingestion writes to ./scan_files/ingestion_audit.log, verifying if the parsed CSV rows match the database written count. It is a quick way to double-check that no data was dropped!
+
+Have fun scanning and visualizing! Let me know if you run into any issues.
