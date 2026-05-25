@@ -4,7 +4,7 @@ This is a simple project to help you parse Nessus vulnerability scans (CSV forma
 
 ---
 
-## Running with Docker Compose (No Download Needed)
+## Running with Docker Compose (No Repo Download Needed)
 
 You do not need to download this repository to run this application. You can set up the entire stack on any machine running Docker by copying the following files into a folder:
 
